@@ -1,14 +1,15 @@
 // /api/poll.ts
-import { kv } from '@vercel/kv';
+import type { NextApiRequest, NextApiResponse } from 'next'
+import { kv } from '@vercel/kv'
 
-export default async function handler(req, res) {
-  const { state } = req.query;
-  console.log('poll state=%s', state);
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  const { state } = req.query
+  if (!state) return res.status(400).send('missing state')
 
-  if (!state) return res.status(400).send('missing state');
+  const code = await kv.getdel(String(state))
+  if (!code) return res.status(204).end()
 
-  const code = await kv.getdel(String(state)); // одноразове читання
-  if (!code) return res.status(204).end();     // <-- те, що ти бачиш зараз
-
-  return res.status(200).json({ code });
+  res.setHeader('Cache-Control', 'no-store')
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8')
+  return res.status(200).send(String(code))
 }
