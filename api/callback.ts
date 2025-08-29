@@ -1,31 +1,36 @@
-// pages/api/callback.ts
-import type { NextApiRequest, NextApiResponse } from "next";
+// /api/callback.ts
+import type { VercelRequest, VercelResponse } from '@vercel/node';
 
-function b64urlToStr(b64: string) {
-  b64 = b64.replace(/-/g, "+").replace(/_/g, "/");
-  while (b64.length % 4) b64 += "=";
-  return Buffer.from(b64, "base64").toString("utf8");
+const KV_URL = process.env.KV_REST_API_URL!;
+const KV_TOKEN = process.env.KV_REST_API_TOKEN!;
+
+async function kvSet(key: string, value: string, ttlSec: number) {
+  await fetch(`${KV_URL}/set/${encodeURIComponent(key)}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${KV_TOKEN}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ value, ex: ttlSec })
+  });
 }
 
-export default function handler(req: NextApiRequest, res: NextApiResponse) {
-  const code = req.query.code as string | undefined;
-  const state = req.query.state as string | undefined;
-  if (!code || !state) return res.status(400).send("missing");
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  const { code, state, error } = req.query as Record<string, string | undefined>;
 
-  let ip = "", port = 80;
-  try {
-    const parsed = JSON.parse(b64urlToStr(state));
-    ip = parsed.ip; port = parsed.port ?? 80;
-  } catch {
-    return res.status(400).send("bad state");
+  if (error) {
+    return res.status(400).send(`<meta charset="utf-8"><h3>Spotify error</h3><pre>${error}</pre>`);
   }
-  const target = `http://${ip}${port && port !== 80 ? `:${port}` : ""}/callback?code=${encodeURIComponent(code)}`;
-  res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.status(200).send(`<!doctype html><meta charset="utf-8">
-  <meta http-equiv="refresh" content="0;url=${target}">
-  <title>Redirecting…</title>
-  <body style="font-family:system-ui;background:#0f172a;color:#e5e7eb">
-  <p>Redirecting to your device: <a style="color:#67e8f9" href="${target}">${target}</a></p>
-  <script>location.replace(${JSON.stringify(target)});</script>
-  </body>`);
+  if (!code || !state) {
+    return res.status(400).send(`<meta charset="utf-8"><h3>Missing code/state</h3>`);
+  }
+
+  try {
+    await kvSet(`sp:${state}`, code, 120); // живе 2 хв
+    res.status(200).send(
+      `<!doctype html><meta charset="utf-8">
+       <style>body{font-family:system-ui;background:#0f172a;color:#e5e7eb;padding:24px}</style>
+       <h2>✅ Авторизація пройшла</h2>
+       <p>Можеш повернутись до пристрою. Він завершить налаштування автоматично.</p>`
+    );
+  } catch (e) {
+    res.status(500).send(`<meta charset="utf-8"><h3>KV error</h3><pre>${String(e)}</pre>`);
+  }
 }
